@@ -22,3 +22,11 @@ type ChatRoom struct {
 	Created_at  string
 	Upated_at   string
 }
+
+type Message struct {
+	MessageId  string
+	ChatRoomId string
+	Sender_Id  string
+	Content    string
+	Created_at string
+}

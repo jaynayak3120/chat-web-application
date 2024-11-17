@@ -18,17 +18,20 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.HandleFunc("/health", s.healthHandler)
 	r.HandleFunc("/login", s.authenticateUser).Methods("POST")
 
-	r.HandleFunc("/createuser", s.createUser).Methods("POST")
-	r.HandleFunc("/getAllUsers", s.getAllUsers).Methods("GET")
-	r.HandleFunc("/getAUser/{id}", s.GetAUser).Methods("GET")
-	r.HandleFunc("/updateUserPassword/{id}&{password}", s.updateUserPassword).Methods("PUT")
-	r.HandleFunc("/updateUserDetails/{id}", s.updateUserDetails).Methods("PUT")
-	r.HandleFunc("/deleteUser/{id}", s.deleteUser).Methods("DELETE")
+	r.HandleFunc("/user", s.createUser).Methods("POST")
+	r.HandleFunc("/users", s.getAllUsers).Methods("GET")
+	r.HandleFunc("/user/{id}", s.GetAUser).Methods("GET")
+	r.HandleFunc("/userpassword/{id}&{password}", s.updateUserPassword).Methods("PUT")
+	r.HandleFunc("/user/{id}", s.updateUserDetails).Methods("PUT")
+	r.HandleFunc("/user/{id}", s.deleteUser).Methods("DELETE")
 
 	r.HandleFunc("/chatroom", s.createChatRoom).Methods("POST")
 	r.HandleFunc("/chatrooms", s.getAllChatRooms).Methods("GET")
 	r.HandleFunc("/chatroom/{id}", s.getChatRoom).Methods("GET")
 	r.HandleFunc("/chatroom/{id}", s.deleteChatRoom).Methods("DELETE")
+
+	r.HandleFunc("/message", s.createMessage).Methods("POST")
+	r.HandleFunc("/messages/{chatroomid}", s.getMessagesForChatroom).Methods("GET")
 
 	return r
 }
@@ -76,24 +79,10 @@ func (s *Server) authenticateUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func verifyToken(r *http.Request) (bool, string) {
-	tokenString := r.Header.Get("Authorization")
-	if tokenString == "" {
-		return false, "Missing authorization Token"
-	}
-
-	tokenString = tokenString[len("Bearer "):]
-	err := jwtauth.VerifyToken(tokenString)
-	if err != nil {
-		return false, "Invalid token"
-	}
-	return true, ""
-}
-
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -116,8 +105,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAllUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -133,8 +122,8 @@ func (s *Server) getAllUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) GetAUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -152,8 +141,8 @@ func (s *Server) GetAUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateUserPassword(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -178,8 +167,8 @@ func (s *Server) updateUserPassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateUserDetails(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -207,8 +196,8 @@ func (s *Server) updateUserDetails(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -226,8 +215,8 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 // ChatRoom
 func (s *Server) createChatRoom(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -246,8 +235,8 @@ func (s *Server) createChatRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteChatRoom(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -265,8 +254,8 @@ func (s *Server) deleteChatRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAllChatRooms(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -282,8 +271,8 @@ func (s *Server) getAllChatRooms(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getChatRoom(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	isValid, errMessage := verifyToken(r)
-	if !isValid {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, errMessage)
 		return
@@ -297,4 +286,42 @@ func (s *Server) getChatRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(chatRoom)
+}
+
+func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, errMessage)
+		return
+	}
+
+	var message model.Message
+	_ = json.NewDecoder(r.Body).Decode(&message)
+	responseMessage, err := s.db.CreateMessage(message)
+	if err != nil {
+		fmt.Fprint(w, err)
+	}
+
+	fmt.Fprint(w, responseMessage)
+}
+
+func (s *Server) getMessagesForChatroom(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, errMessage)
+		return
+	}
+
+	params := mux.Vars(r)
+	messages, err := s.db.GetMessagesForChatRoom(params["chatroomid"])
+	if err != nil {
+		fmt.Fprint(w, err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(&messages)
 }

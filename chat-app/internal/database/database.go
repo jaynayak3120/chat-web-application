@@ -42,6 +42,10 @@ type Service interface {
 
 	GetChatRoom(Id string) (model.ChatRoom, error)
 
+	CreateMessage(message model.Message) (string, error)
+
+	GetMessagesForChatRoom(chatRoomId string) ([]model.Message, error)
+
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.
 	Close() error
@@ -236,7 +240,7 @@ func (s *service) DeleteUser(Id string) error {
 
 // Chatroom
 func (s *service) CreateChatRoom(chatRoom model.ChatRoom) (string, error) {
-	result, err := s.db.Exec("INSERT INTO chatroom (name, decription, created_at, updated_at) VALUES(?, ?, ?, ?)",
+	result, err := s.db.Exec("INSERT INTO chatroom (name, description, created_at, updated_at) VALUES(?, ?, ?, ?)",
 		&chatRoom.Name, &chatRoom.Description, time.Now(), time.Now())
 	if err != nil {
 		return "", err
@@ -264,7 +268,7 @@ func (s *service) DeleteChatRoom(Id string) error {
 
 func (s *service) GetChatRoom(Id string) (model.ChatRoom, error) {
 	var chatRoom model.ChatRoom
-	err := s.db.QueryRow("SELECT chatRoomId, Name, decription, created_at, updated_at FROM chatroom WHERE chatRoomId = ?",
+	err := s.db.QueryRow("SELECT chatRoomId, Name, description, created_at, updated_at FROM chatroom WHERE chatRoomId = ?",
 		&Id).Scan(&chatRoom.ChatRoomId, &chatRoom.Name, &chatRoom.Description, &chatRoom.Created_at, &chatRoom.Upated_at)
 	if err != nil {
 		return chatRoom, err
@@ -274,7 +278,7 @@ func (s *service) GetChatRoom(Id string) (model.ChatRoom, error) {
 
 func (s *service) GetAllChatRoom() ([]model.ChatRoom, error) {
 	var chatRooms []model.ChatRoom
-	rows, err := s.db.Query("SELECT chatroomId, name, decription, created_at, updated_at FROM chatroom")
+	rows, err := s.db.Query("SELECT chatroomId, name, description, created_at, updated_at FROM chatroom")
 	if err != nil {
 		return chatRooms, err
 	}
@@ -287,6 +291,35 @@ func (s *service) GetAllChatRoom() ([]model.ChatRoom, error) {
 		chatRooms = append(chatRooms, chatRoom)
 	}
 	return chatRooms, nil
+}
+
+func (s *service) CreateMessage(message model.Message) (string, error) {
+	result, err := s.db.Exec("INSERT INTO message (chatroomid, sender_id, content, created_at) VALUES(?, ?, ?, ?)", &message.ChatRoomId,
+		&message.Sender_Id, &message.Content, time.Now())
+	if err != nil {
+		return "", err
+	}
+	messageID, _ := result.LastInsertId()
+
+	return "Message is created with ID: " + fmt.Sprintf("%d", messageID), nil
+}
+
+func (s *service) GetMessagesForChatRoom(chatRoomId string) ([]model.Message, error) {
+	var messages []model.Message
+	rows, err := s.db.Query("SELECT messageid, chatroomid, sender_id, content, created_at FROM message WHERE chatroomid = ?",
+		chatRoomId)
+	if err != nil {
+		return messages, err
+	}
+
+	for rows.Next() {
+		var message model.Message
+		if err := rows.Scan(&message.MessageId, &message.ChatRoomId, &message.Sender_Id, &message.Content, &message.Created_at); err != nil {
+			return messages, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, nil
 }
 
 // Close closes the database connection.
