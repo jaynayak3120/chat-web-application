@@ -20,6 +20,14 @@ type Service interface {
 	// The keys and values in the map are service-specific.
 	Health() map[string]string
 
+	CreateRefreshToken(user_id string, refreshTokenString string) error
+
+	GetRefreshToken(refreshTokenString string) (bool, error)
+
+	UpdateRefreshToken(refreshTokenString string, user_id string) error
+
+	DeleteRefreshToken() (string, error)
+
 	CreateUser(user model.User) (string, error)
 
 	GetAllUsers() ([]model.User, error)
@@ -45,6 +53,8 @@ type Service interface {
 	CreateMessage(message model.Message) (string, error)
 
 	GetMessagesForChatRoom(chatRoomId string) ([]model.Message, error)
+
+	GetMessagesforIndividualChat(senderReceiver map[string]string) ([]model.Message, error)
 
 	// Close terminates the database connection.
 	// It returns an error if the connection cannot be closed.
@@ -143,8 +153,53 @@ func (s *service) Health() map[string]string {
 	return stats
 }
 
+func (s *service) CreateRefreshToken(user_id string, refreshTokenString string) error {
+	result, err := s.db.Exec("INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES(?, ?, ?)", &user_id, &refreshTokenString,
+		time.Now().Add(time.Hour*24))
+	if err != nil {
+		return err
+	}
+	refreshToken_id, _ := result.LastInsertId()
+	fmt.Println("Refresh-token is inserted in the system with Id:", refreshToken_id)
+	return nil
+}
+
+func (s *service) GetRefreshToken(refreshTokenString string) (bool, error) {
+	var isValid bool
+	err := s.db.QueryRow("SELECT is_valid FROM refresh_tokens WHERE token = ? AND expires_at > ?", &refreshTokenString,
+		time.Now()).Scan(&isValid)
+	if err != nil {
+		return false, err
+	}
+	if !isValid {
+		return isValid, fmt.Errorf("refresh token is not valid")
+	}
+	return isValid, nil
+}
+
+func (s *service) UpdateRefreshToken(refreshTokenString string, user_id string) error {
+	_, err := s.db.Exec("Update refresh_tokens SET is_valid = ? WHERE token = ? AND user_id = ?", false, &refreshTokenString, &user_id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *service) DeleteRefreshToken() (string, error) {
+	result, err := s.db.Exec("DELETE FROM refresh_tokens WHERE is_valid = false")
+	if err != nil {
+		return "", err
+	}
+
+	totalDeletedRows, _ := result.RowsAffected()
+	fmt.Println("Total Deleted refresh tokens:", totalDeletedRows)
+
+	return fmt.Sprint("Invalid Refresh Tokens Deleted: ", totalDeletedRows), nil
+}
+
 func (s *service) CreateUser(user model.User) (string, error) {
-	fmt.Println("user:", user)
+
 	result, err := s.db.Exec("INSERT INTO user (username, password_hash, Name, email, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)",
 		&user.UserName, &user.Password, &user.Name, &user.Email, time.Now(), time.Now())
 	if err != nil {
@@ -233,9 +288,8 @@ func (s *service) DeleteUser(Id string) error {
 
 	if totalDeletedRows > 0 {
 		return nil
-	} else {
-		return fmt.Errorf("No Chatroom exists with Id: " + Id)
 	}
+	return fmt.Errorf("No Chatroom exists with Id: " + Id)
 }
 
 // Chatroom
@@ -294,19 +348,34 @@ func (s *service) GetAllChatRoom() ([]model.ChatRoom, error) {
 }
 
 func (s *service) CreateMessage(message model.Message) (string, error) {
-	result, err := s.db.Exec("INSERT INTO message (chatroomid, sender_id, content, created_at) VALUES(?, ?, ?, ?)", &message.ChatRoomId,
-		&message.Sender_Id, &message.Content, time.Now())
-	if err != nil {
-		return "", err
-	}
-	messageID, _ := result.LastInsertId()
+	if message.Receiver_Id != "" && message.ChatRoomId == "" {
+		result, err := s.db.Exec("INSERT INTO message (sender_id, receiver_id, content, created_at) VALUES(?, ?, ?, ?)",
+			&message.Sender_Id, &message.Receiver_Id, &message.Content, time.Now())
 
-	return "Message is created with ID: " + fmt.Sprintf("%d", messageID), nil
+		if err != nil {
+			return "", err
+		}
+		messageID, _ := result.LastInsertId()
+
+		return "Message is created with ID: " + fmt.Sprintf("%d", messageID), nil
+	}
+	if message.ChatRoomId != "" && message.Receiver_Id == "" {
+		result, err := s.db.Exec("INSERT INTO message (chatroomid, sender_id, content, created_at) VALUES(?, ?, ?, ?)",
+			&message.ChatRoomId, &message.Sender_Id, &message.Content, time.Now())
+
+		if err != nil {
+			return "", err
+		}
+		messageID, _ := result.LastInsertId()
+
+		return "Message is created with ID: " + fmt.Sprintf("%d", messageID), nil
+	}
+	return "", fmt.Errorf("there cannot have both chatroomid and receiver_id in the body")
 }
 
 func (s *service) GetMessagesForChatRoom(chatRoomId string) ([]model.Message, error) {
 	var messages []model.Message
-	rows, err := s.db.Query("SELECT messageid, chatroomid, sender_id, content, created_at FROM message WHERE chatroomid = ?",
+	rows, err := s.db.Query("SELECT messageid, chatroomid, sender_id, content, created_at FROM message WHERE chatroomid = ? ORDER BY created_at",
 		chatRoomId)
 	if err != nil {
 		return messages, err
@@ -314,7 +383,29 @@ func (s *service) GetMessagesForChatRoom(chatRoomId string) ([]model.Message, er
 
 	for rows.Next() {
 		var message model.Message
-		if err := rows.Scan(&message.MessageId, &message.ChatRoomId, &message.Sender_Id, &message.Content, &message.Created_at); err != nil {
+		err := rows.Scan(&message.MessageId, &message.ChatRoomId, &message.Sender_Id, &message.Content,
+			&message.Created_at)
+		if err != nil {
+			return messages, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, nil
+}
+
+func (s *service) GetMessagesforIndividualChat(senderReceiver map[string]string) ([]model.Message, error) {
+	var messages []model.Message
+	rows, err := s.db.Query("SELECT messageid, sender_id, receiver_id, content, created_at FROM message WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?) ORDER BY created_at",
+		senderReceiver["sender_id"], senderReceiver["receiver_id"], senderReceiver["receiver_id"], senderReceiver["sender_id"])
+	if err != nil {
+		return messages, err
+	}
+
+	for rows.Next() {
+		var message model.Message
+		err := rows.Scan(&message.MessageId, &message.Sender_Id, &message.Receiver_Id, &message.Content,
+			&message.Created_at)
+		if err != nil {
 			return messages, err
 		}
 		messages = append(messages, message)

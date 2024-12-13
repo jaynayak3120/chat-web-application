@@ -24,9 +24,10 @@ type ChatRoom struct {
 }
 
 type Message struct {
-	MessageId  string
-	ChatRoomId string
-	Sender_Id  string
-	Content    string
-	Created_at string
+	MessageId   string
+	ChatRoomId  string
+	Sender_Id   string
+	Receiver_Id string
+	Content     string
+	Created_at  string
 }

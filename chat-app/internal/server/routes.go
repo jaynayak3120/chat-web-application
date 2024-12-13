@@ -17,6 +17,8 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.HandleFunc("/", s.HelloWorldHandler)
 	r.HandleFunc("/health", s.healthHandler)
 	r.HandleFunc("/login", s.authenticateUser).Methods("POST")
+	r.HandleFunc("/refresh", s.refreshAccessToken).Methods("GET")
+	r.HandleFunc("/refresh_token/invalid", s.deleteRefreshToken).Methods("DELETE")
 
 	r.HandleFunc("/user", s.createUser).Methods("POST")
 	r.HandleFunc("/users", s.getAllUsers).Methods("GET")
@@ -32,6 +34,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.HandleFunc("/message", s.createMessage).Methods("POST")
 	r.HandleFunc("/messages/{chatroomid}", s.getMessagesForChatroom).Methods("GET")
+	r.HandleFunc("/messages", s.getMessagesforIndividualChat).Methods("POST")
+
+	r.HandleFunc("/ws", s.handleConnections)
 
 	return r
 }
@@ -63,20 +68,86 @@ func (s *Server) authenticateUser(w http.ResponseWriter, r *http.Request) {
 
 	_ = json.NewDecoder(r.Body).Decode(&userCreds)
 
-	_, err := s.db.GetAUser(userCreds.UserName, userCreds.Password)
+	user, err := s.db.GetAUser(userCreds.UserName, userCreds.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, "Authentication failed, Invalid Credentials")
-	} else {
-		tokenString, err := jwtauth.CreateToken(userCreds.UserName)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, err)
-		} else {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, tokenString)
-		}
+		return
 	}
+	tokenPair, err := jwtauth.CreateToken(user.Id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+	fmt.Println("tokenPair:", tokenPair)
+	err = s.db.CreateRefreshToken(user.Id, tokenPair["refresh_token"])
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(tokenPair)
+	//fmt.Fprint(w, tokenPair)
+}
+
+func (s *Server) refreshAccessToken(w http.ResponseWriter, r *http.Request) {
+	refreshTokenString := r.Header.Get("Authorization")
+	if refreshTokenString == "" || len(refreshTokenString) <= len("Bearer ") {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, fmt.Errorf("missing refresh token"))
+	}
+	refreshTokenString = refreshTokenString[len("Bearer "):]
+
+	isValid, err := s.db.GetRefreshToken(refreshTokenString)
+	if !isValid || err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+
+	tokenPair, err := jwtauth.RefreshAccessToken(refreshTokenString)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+
+	err = s.db.CreateRefreshToken(tokenPair["user_id"], tokenPair["refresh_token"])
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+
+	err = s.db.UpdateRefreshToken(refreshTokenString, tokenPair["user_id"])
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, err)
+		return
+	}
+	delete(tokenPair, "user_id")
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(tokenPair)
+}
+
+func (s *Server) deleteRefreshToken(w http.ResponseWriter, r *http.Request) {
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, errMessage)
+		return
+	}
+
+	response, err := s.db.DeleteRefreshToken()
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, err)
+		return
+	}
+	fmt.Fprint(w, response)
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -324,4 +395,70 @@ func (s *Server) getMessagesForChatroom(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(&messages)
+}
+
+func (s *Server) getMessagesforIndividualChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, errMessage)
+		return
+	}
+
+	senderReceiver := make(map[string]string)
+
+	_ = json.NewDecoder(r.Body).Decode(&senderReceiver)
+
+	messages, err := s.db.GetMessagesforIndividualChat(senderReceiver)
+	if err != nil {
+		fmt.Fprint(w, err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(&messages)
+}
+
+func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	errMessage := jwtauth.VerifyToken(r)
+	if errMessage != nil {
+		log.Println("Error in authentication:", errMessage)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		fmt.Println("Error upgrading connection:", err)
+		return
+	}
+	defer conn.Close()
+
+	clients[conn] = true
+
+	//var messageJSON string
+	var message model.Message
+	for {
+		err := conn.ReadJSON(&message)
+		//_, messageBytes, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("Error reading message:", err)
+			delete(clients, conn)
+			break
+		}
+		log.Println("Message Received:", message)
+
+		responseMessage, err := s.db.CreateMessage(message)
+		if err != nil {
+			log.Println("Error Inserting Message:", err)
+			continue
+		}
+		log.Println("response:", responseMessage)
+
+		err = s.sendChatHistory(message)
+		if err != nil {
+			log.Println("Error fetching the chat History:", err)
+			continue
+		}
+	}
 }

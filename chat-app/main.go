@@ -9,6 +9,7 @@ import (
 func main() {
 	fmt.Println("START>>>>")
 	//database.PrintEnv()
+	go server.HandleMessage()
 	server := server.NewServer()
 	fmt.Println("Server is Listning on Port:", os.Getenv("PORT"))
 	err := server.ListenAndServe()
