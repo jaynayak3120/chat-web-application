@@ -187,7 +187,7 @@ func (s *service) UpdateRefreshToken(refreshTokenString string, user_id string) 
 }
 
 func (s *service) DeleteRefreshToken() (string, error) {
-	result, err := s.db.Exec("DELETE FROM refresh_tokens WHERE is_valid = false")
+	result, err := s.db.Exec("DELETE FROM refresh_tokens WHERE is_valid = false OR expires_at < ?", time.Now())
 	if err != nil {
 		return "", err
 	}
